@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define SM4_BLOCK_SIZE 16
 #define ROTL32(x,n)  (((x) << (n)) | ((x) >> (32 - (n))))
@@ -198,7 +199,7 @@ void sm4_ctr_encrypt(const u8 *in,u8 *out,int len,const u8 iv[16],const sm4_cont
 
 // —— PKCS#7 填充／去填充封装
 static int pkcs7_pad(const u8 *in, int in_len, u8 **out){
-    int pad = SM4_BLOCK_SIZE - (in_len % SM4_BLOCK_SIZE);
+    int pad = (SM4_BLOCK_SIZE - (in_len % SM4_BLOCK_SIZE))%SM4_BLOCK_SIZE;
     int total = in_len + pad;
     *out = malloc(total);
     memcpy(*out, in, in_len);
@@ -246,8 +247,138 @@ void test_sm4(void){
     printf("\n");
 }
 
+// 测量吞吐率的函数
+void test_throughput(void) {
+    sm4_context ctx;
+    u8 key[16] = { 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10 };
+    u8 iv[16] = {0x12, 0x34, 0x56, 0x22, 0x98, 0xBA, 0xDC, 0xFE, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01};
+    size_t data_size = 1024 * 1024 * 100;  // 测试数据量为100MB
+    u8 *pt = malloc(data_size);  // 明文数据
+    u8 *ct = malloc(data_size);  // 密文数据
+    u8 *dt = malloc(data_size);  // 解密后的数据
+    clock_t start_time, end_time;  // 用于测量时间
+    double time_taken,throughput;  // 用于存储加密和解密所用时间
+
+    // 用随机数据填充明文
+    for (size_t i = 0; i < data_size; i++) {
+        pt[i] = (u8)(i % 256);  // 填充0-255之间的值
+    }
+
+    sm4_key_schedule(key, &ctx);  // 初始化密钥
+    for(int i = 0; i < 5; i++) {  // 测试五种加密模式
+    switch (i){
+        case 0: 
+        printf("----------ECB mode----------\n");
+        // 测量加密的时间
+        start_time = clock();  // 获取开始时间
+        sm4_ecb_pkcs7_encrypt(pt, data_size, ct, NULL, &ctx);  // 加密
+        end_time = clock();  // 获取结束时间
+        break;
+
+        case 1: 
+        printf("----------CBC mode----------\n"); 
+        start_time = clock();  
+        sm4_cbc_pkcs7_encrypt(pt, data_size, ct, iv, &ctx); 
+        end_time = clock();  
+        break;
+
+        case 2: 
+        printf("----------CFB mode----------\n"); 
+        start_time = clock();  
+        sm4_cfb_pkcs7_encrypt(pt, data_size, ct, iv, &ctx); 
+        end_time = clock();
+        break;
+        
+        case 3: 
+        printf("----------OFB mode----------\n");
+        start_time = clock();  
+        sm4_ofb_pkcs7_encrypt(pt, data_size, ct, iv, &ctx); 
+        end_time = clock();
+        break;
+        
+        case 4: 
+        printf("----------CTR mode----------\n"); 
+        start_time = clock();  
+        sm4_ctr_pkcs7_encrypt(pt, data_size, ct, iv, &ctx); 
+        end_time = clock();
+        break;
+    }
+    
+    // 计算加密所用时间（秒）
+    time_taken = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+
+    // 计算吞吐率 (MB/s)
+    throughput = (data_size / (1024.0 * 1024.0)) / time_taken;
+
+    // 打印结果
+    printf("datasize: %.2f MB\n", data_size / (1024.0 * 1024.0));
+    printf("1.  encryption time: %.2f s\n", time_taken);
+    printf("2.  en_throughput: %.2f MB/s\n", throughput);
+    printf("\n");
+
+      // 测试五种解密模式
+    switch (i){
+            case 0: 
+            // 测量解密的时间
+            start_time = clock();  // 获取开始时间
+            sm4_ecb_pkcs7_decrypt(ct, data_size, dt, NULL, &ctx);  // 加密
+            end_time = clock();  // 获取结束时间
+            printf("whether correct after decryption: %s\n", memcmp(pt, dt, data_size) == 0 ? "correct" : "incorrect");
+            break;
+    
+            case 1:  
+            start_time = clock();  
+            sm4_cbc_pkcs7_decrypt(ct, data_size, dt, iv, &ctx); 
+            end_time = clock();
+            printf("whether correct after decryption: %s\n", memcmp(pt, dt, data_size) == 0 ? "correct" : "incorrect");  
+            break;
+    
+            case 2: 
+            start_time = clock();  
+            sm4_cfb_pkcs7_decrypt(ct, data_size, dt, iv, &ctx); 
+            end_time = clock();
+            printf("whether correct after decryption: %s\n", memcmp(pt, dt, data_size) == 0 ? "correct" : "incorrect");
+            break;
+            
+            case 3: 
+            start_time = clock();  
+            sm4_ofb_pkcs7_decrypt(ct, data_size, dt, iv, &ctx); 
+            end_time = clock();
+            printf("whether correct after decryption: %s\n", memcmp(pt, dt, data_size) == 0 ? "correct" : "incorrect");
+            break;
+            
+            case 4: 
+            start_time = clock();  
+            sm4_ctr_pkcs7_decrypt(ct, data_size, dt, iv, &ctx); 
+            end_time = clock();
+            printf("whether correct after decryption: %s\n", memcmp(pt, dt, data_size) == 0 ? "correct" : "incorrect");
+            break;
+        }
+        
+        // 计算解密所用时间（秒）
+        time_taken = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    
+        // 计算吞吐率 (MB/s)
+        throughput = (data_size / (1024.0 * 1024.0)) / time_taken;
+    
+        printf("3.  decryption time: %.2f s\n", time_taken);
+        printf("4.  de_throughput: %.2f MB/s\n", throughput);
+        printf("\n");
+
+    }
+    
+    // 释放内存
+    free(pt);
+    free(ct);
+    free(dt);
+}
+
+
+
+
 //如果想要单独测试加解密模块可以取消此处注释，还原主函数入口
-//int main(void){
-//   test_sm4();
-//   return 0;
-//}
+int main(void){
+   test_throughput();  // 测试吞吐率
+   test_sm4();  // 测试加解密
+   return 0;
+}
